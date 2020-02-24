@@ -1,0 +1,595 @@
+---
+title: "IBCF / UBCF - Movie Recommendation System - R Notebook"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+ 
+#MovieLense Recommendation System in R
+
+Item Based Collaborative Filtering (IBCF) recommends items on the basis of the similarity matrix. this algorithm is efficient and scalable. In this project we will use the demo MovieLens dataset.
+
+*Identify which items are similar in terms of having been purchased by the same people
+*Recommend to a new user the items that are similar to its purchases
+
+```{r eval=TRUE, echo=TRUE}
+library(recommenderlab)
+set.seed(1)
+data(MovieLense)
+MovieLense
+```
+
+Each row of MovieLense corresponds to a user, and each column corresponds to a
+movie. There are more than 943 x 1664 = 1,500,000 combinations between a user and
+a movie. Therefore, storing the complete matrix would require more than 1,500,000
+cells. However, not every user has watched every movie. Therefore, there are fewer
+than 100,000 ratings, and the matrix is sparse.
+
+
+##Computing the similarity matrix
+
+Determine how similar the first five users are with each other. Let's compute this using the cosine distance
+
+```{r eval=TRUE, echo=TRUE}
+similarity_users <- similarity(MovieLense[1:10, ], method = "cosine", which = "users")
+class(similarity_users)
+```
+
+dist is a base R class, we can use it in different ways.
+Let's convert similarity_users into a matrix to visualize it.
+
+```{r eval=TRUE, echo=TRUE}
+as.matrix(similarity_users)
+```
+
+The more red the cell is, the more similar two users are. Note that the diagonal is red,
+since it's comparing each user with itself:
+
+```{r eval=TRUE, echo=TRUE}
+image(as.matrix(similarity_users), main = "User similarity")
+```
+
+```{r eval=TRUE, echo=TRUE}
+similarity_items <- similarity(MovieLense[, 1:4], method = "cosine", which = "items")
+as.matrix(similarity_items)
+```
+
+Similar to the preceding screenshot, we can visualize the matrix using this image:
+
+```{r eval=TRUE, echo=TRUE}
+image(as.matrix(similarity_items), main = "Item similarity")
+```
+
+The similarity is the base of collaborative filtering models.
+
+```{r eval=TRUE, echo=TRUE}
+recommender_models <- recommenderRegistry$get_entries(dataType = "realRatingMatrix")
+names(recommender_models)
+```
+
+##Descriptions
+
+```{r eval=TRUE, echo=TRUE}
+lapply(recommender_models, "[[", "description")
+```
+
+```{r eval=TRUE, echo=TRUE}
+recommender_models$IBCF_realRatingMatrix$parameters
+```
+
+##Data exploration
+
+```{r eval=TRUE, echo=TRUE}
+library("recommenderlab")
+library("ggplot2")
+data(MovieLense)
+class(MovieLense)
+```
+
+MovieLense is a realRatingMatrix object containing a dataset about movie ratings. Each row corresponds to a user, each column to a movie, and each value to a rating.
+
+```{r eval=TRUE, echo=TRUE}
+dim(MovieLense)
+```
+
+There are 943 users and 1664 movies. realRatingMatrix is an S4 class
+
+```{r eval=TRUE, echo=TRUE}
+slotNames(MovieLense)
+```
+
+```{r eval=TRUE, echo=TRUE}
+class(MovieLense@data)
+```
+
+```{r eval=TRUE, echo=TRUE}
+dim(MovieLense@data)
+```
+
+MovieLense(@)data belongs to the dgCMatrix class that inherits from Matrix. In order
+to perform custom data exploration, we might need to access this slot.
+
+##Exploring the values of the rating
+
+```{r eval=TRUE, echo=TRUE}
+vector_ratings <- as.vector(MovieLense@data)
+unique(vector_ratings)
+```
+
+The ratings are integers in the range 0-5. Let's count the occurrences of each of them.
+
+```{r eval=TRUE, echo=TRUE}
+table_ratings <- table(vector_ratings)
+barplot(table_ratings, col = "blue", xlab = "rating", ylab="Count", main = "Rating Distribution")
+```
+
+According to the documentation, a rating equal to 0 represents a missing value, so we can remove them from vector_ratings. We can also build a frequency plot of the ratings. In order to visualize a bar plot with frequencies, we can use ggplot2. Let's convert them into categories using factor and build a quick chart:
+
+```{r eval=TRUE, echo=TRUE}
+vector_ratings <- vector_ratings[vector_ratings != 0]
+vector_ratings <- factor(vector_ratings)
+```
+
+Let's go ahead and visualize. The following image shows the distribution of the ratings. Most of the ratings are above 2, and the most common is 4.
+
+```{r eval=TRUE, echo=TRUE}
+table_ratings <- table(vector_ratings)
+barplot(table_ratings, col = "blue", xlab = "rating", ylab="Count", main = "Rating Distribution")
+```
+
+##Exploring which movies have been viewed 
+
+*colCounts: This is the number of non-missing values for each column
+*colMeans: This is the average value for each column
+
+*Which are the most viewed movies (TOP 10)?
+
+Sort the movies by number of views:
+
+```{r eval=TRUE, echo=TRUE}
+views_per_movie <- colCounts(MovieLense)
+
+table_views <- data.frame(
+  movie = names(views_per_movie),
+  views = views_per_movie)
+
+table_views <- table_views[order(table_views$views, decreasing = TRUE), ]
+
+head(table_views, 10)
+```
+
+Let's visualize the first six rows and build a histogram:
+
+```{r eval=TRUE, echo=TRUE}
+ggplot(table_views[1:6, ], aes(x = movie, y = views)) +
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle("Number of views of the top movies")
+```
+
+In the preceding chart, you can notice that Star Wars (1977) is the most viewed
+movie, exceeding the others by about 100 views.
+
+*Which are the least viewed movies (BOTTOM 10)?
+
+```{r eval=TRUE, echo=TRUE}
+views_per_movie <- colCounts(MovieLense)
+
+table_views <- data.frame(
+  movie = names(views_per_movie),
+  views = views_per_movie)
+
+table_views <- table_views[order(table_views$views, decreasing = FALSE), ]
+head(table_views, 10)
+```
+
+```{r eval=TRUE, echo=TRUE}
+ggplot(table_views[1:6, ], aes(x = movie, y = views)) +
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle("Number of views of the top movies")
+```
+
+#Explore Average Ratings
+
+```{r eval=TRUE, echo=TRUE}
+average_ratings <- colMeans(MovieLense)
+```
+
+Let's visualize by creating a chart. The following image shows the distribution of the average movie rating:
+
+```{r eval=TRUE, echo=TRUE}
+qplot(average_ratings) + 
+  stat_bin(binwidth = 0.05)+
+  ggtitle("Distribution of the average movie rating")
+```
+
+The highest value is around 3, and there are a few movies whose rating is either 1 or 5. Probably, the reason is that these movies received a rating from a few people only, so we shouldn't take them into account.
+
+Let's remove the movies whose number of views is below a defined threshold, for instance, below 100:
+
+The following image shows the distribution of the relevant average ratings:
+
+```{r eval=TRUE, echo=TRUE}
+average_ratings_relevant <- average_ratings[views_per_movie > 100]
+qplot(average_ratings_relevant) + stat_bin(binwidth = 0.1) + 
+  ggtitle(paste("Distribution of the relevant average ratings"))
+```
+
+All the rankings are between 2.3 and 4.5. As expected, we removed the extremes. The highest value changes, and now, it is around 4.
+
+Top percentile of users and movies, let's use quantile function
+
+```{r eval=TRUE, echo=TRUE}
+min_n_movies <- quantile(rowCounts(MovieLense), 0.99)
+min_n_movies
+```
+
+```{r eval=TRUE, echo=TRUE}
+min_n_users <- quantile(colCounts(MovieLense), 0.99)
+min_n_users
+```
+
+##Questions: 
+*Users who have rated at least 50 movies
+*Movies that have been watched at least 100 times
+
+```{r eval=TRUE, echo=TRUE}
+ratings_movies <- MovieLense[rowCounts(MovieLense) > 50, colCounts(MovieLense) > 100] 
+ratings_movies
+```
+
+The ratings_movies object contains about half of the users and a fifth of the movies
+in comparison with MovieLense.
+
+Normalize the data.
+
+```{r eval=TRUE, echo=TRUE}
+ratings_movies_norm <- normalize(ratings_movies)
+```
+
+Let's take a look at the average rating by users:
+
+```{r eval=TRUE, echo=TRUE}
+sum(rowMeans(ratings_movies_norm) > 0.00001)
+```
+##Binarizing the data
+
+```{r eval=TRUE, echo=TRUE}
+ratings_movies_watched <- binarize(ratings_movies, minRating = 1)
+```
+
+Let's select this 5 percent using quantile. The row and column counts are the same as the original matrix, so we can still apply rowCounts and colCounts on ratings_movies:
+
+```{r eval=TRUE, echo=TRUE}
+min_movies_binary <- quantile(rowCounts(ratings_movies), 0.95)
+min_users_binary <- quantile(colCounts(ratings_movies), 0.95)
+```
+
+In this section, we prepared the data to perform recommendations. In the upcoming
+sections, we will build collaborative filtering models.
+
+
+#Training and Test Sets
+
+First, we randomly define the which_train vector that is TRUE for users in the training set and FALSE for the others. We will set the probability in the training set as 80 percent:
+
+```{r eval=TRUE, echo=TRUE}
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(ratings_movies), replace = TRUE, prob = c(0.8, 0.2))
+head(which_train)
+```
+
+Let's define the training and the test sets:
+
+```{r eval=TRUE, echo=TRUE}
+recc_data_train <- ratings_movies[which_train, ]
+recc_data_test <- ratings_movies[!which_train, ]
+```
+
+Sample Code:
+
+```{r eval=TRUE, echo=TRUE}
+which_set <- sample(x = 1:5, size = nrow(ratings_movies), replace = TRUE)
+for(i_model in 1:5) 
+{
+  which_train <- which_set == i_model
+  recc_data_train <- ratings_movies[which_train, ]
+  recc_data_test <- ratings_movies[!which_train, ]
+}
+```
+
+#Recommendation model
+
+*Data: This is the training set
+*Method: This is the name of the technique
+*Parameters: These are some optional parameters of the technique
+
+IBCF, which stands for item-based collaborative filtering. Below outputs are the parameters.
+
+```{r eval=TRUE, echo=TRUE}
+recommender_models <- recommenderRegistry$get_entries(dataType = "realRatingMatrix")
+recommender_models$IBCF_realRatingMatrix$parameters
+```
+
+So let's build it.
+
+```{r eval=TRUE, echo=TRUE}
+recc_model <- Recommender(data = recc_data_train, method = "IBCF", parameter = list(k = 30))
+recc_model
+```
+
+```{r eval=TRUE, echo=TRUE}
+class(recc_model)
+```
+
+We'll extract some of the details (description and parameters).
+
+```{r eval=TRUE, echo=TRUE}
+model_details <- getModel(recc_model)
+model_details$description
+```
+
+The model_details$sim component contains the similarity matrix. Let's check its structure:
+
+```{r eval=TRUE, echo=TRUE}
+class(model_details$sim)
+```
+
+```{r eval=TRUE, echo=TRUE}
+dim(model_details$sim)
+```
+
+model_details$sim is a square matrix whose size is equal to the number of items. Let's build heat map.
+
+```{r eval=TRUE, echo=TRUE}
+n_items_top <- 20
+image(model_details$sim[1:n_items_top, 1:n_items_top], main = "Heatmap of the first rows and columns")
+```
+
+Most of the values are equal to 0. The reason is that each row contains only k elements.
+
+```{r eval=TRUE, echo=TRUE}
+model_details$k
+```
+
+```{r eval=TRUE, echo=TRUE}
+row_sums <- rowSums(model_details$sim > 0)
+table(row_sums)
+```
+
+So each row has 30 elements greater than 0. However, the matrix is not supposed to be symmetric. In fact, the number of non-null elements for each column depends on how many times the corresponding movie was included in the top k of
+another movie. Let's check the distribution of the number of elements by column:
+
+```{r eval=TRUE, echo=TRUE}
+col_sums <- colSums(model_details$sim > 0)
+```
+
+Let's build the distribution chart:
+
+```{r eval=TRUE, echo=TRUE}
+qplot(col_sums) + stat_bin(binwidth = 1) + ggtitle("Distribution of the column count")
+```
+
+As expected, there are a few movies that are similar to many others. Let's see which are the movies with the most elements:
+
+```{r eval=TRUE, echo=TRUE}
+which_max <- order(col_sums, decreasing = TRUE)[1:6]
+rownames(model_details$sim)[which_max]
+```
+
+```{r eval=TRUE, echo=TRUE}
+n_recommended <- 6
+recc_predicted <- predict(object = recc_model, newdata = recc_data_test, n = n_recommended)
+recc_predicted
+```
+
+The recc_predicted object contains the recommendations
+
+```{r eval=TRUE, echo=TRUE}
+class(recc_predicted)
+```
+
+```{r eval=TRUE, echo=TRUE}
+slotNames(recc_predicted)
+```
+
+For instance, these are the recommendations for the first user:
+
+```{r eval=TRUE, echo=TRUE}
+recc_predicted@items[[1]]
+```
+
+We would need to extract the recommended movies from recc_predicted(@)item labels:
+
+```{r eval=TRUE, echo=TRUE}
+recc_user_1 <- recc_predicted@items[[1]]
+movies_user_1 <- recc_predicted@itemLabels[recc_user_1]
+movies_user_1
+```
+
+Let's define a function of a matrix with the recommendations for each user:
+
+```{r eval=TRUE, echo=TRUE}
+recc_matrix <- sapply(recc_predicted@items, function(x) {
+  colnames(ratings_movies)[x]
+})
+
+dim(recc_matrix)
+```
+
+Let's visualize the recommendations for the first four users:
+
+```{r eval=TRUE, echo=TRUE}
+recc_matrix[1:4][1:4]
+```
+
+Now, we can identify the most recommended movies. For this purpose, we will define a vector with all the recommendations, and we will build a frequency plot:
+
+```{r eval=TRUE, echo=TRUE}
+number_of_items <- factor(table(recc_matrix))
+chart_title <- "Distribution of the number of items for IBCF"
+```
+
+The distribution chart that shows the distribution of the number of items for IBCF:
+
+```{r eval=TRUE, echo=TRUE}
+qplot(number_of_items) + 
+  ggtitle(chart_title)
+```
+
+Let's see which are the most popular recommended movies:
+
+```{r eval=TRUE, echo=TRUE}
+number_of_items_sorted <- sort(number_of_items, decreasing = TRUE)
+number_of_items_top <- head(number_of_items_sorted, n = 4)
+table_top <- data.frame(names(number_of_items_top), number_of_items_top)
+table_top
+```
+
+As you can see from the preceding table, the movie "Mr. Smith Goes to Washington" has been recommended the most times.
+
+IBCF recommends items on the basis of the similarity matrix. this algorithm is efficient and scalable,
+
+
+#Building the recommendation model
+
+```{r eval=TRUE, echo=TRUE}
+recommender_models <- recommenderRegistry$get_entries(dataType = "realRatingMatrix")
+recommender_models$UBCF_realRatingMatrix$parameters
+```
+
+Model with default parameters:
+
+```{r eval=TRUE, echo=TRUE}
+recc_model <- Recommender(data = recc_data_train, method = "UBCF")
+recc_model
+```
+
+Components of the model:
+
+```{r eval=TRUE, echo=TRUE}
+model_details <- getModel(recc_model)
+names(model_details)
+```
+
+The below object contains the rating matrix. UBCF is a lazy-learning technique, which means that it needs to access all the data to perform a prediction.
+
+```{r eval=TRUE, echo=TRUE}
+model_details$data
+```
+
+##Apply model model to test set
+
+Let's find the top six recommendations for each new user
+
+```{r eval=TRUE, echo=TRUE}
+n_recommended <- 6
+recc_predicted <- predict(object = recc_model, newdata = recc_data_test, n = n_recommended) 
+recc_predicted
+```
+
+Let's define a funtionc of a matrix with the recommendations to the test set users:
+
+```{r eval=TRUE, echo=TRUE}
+recc_matrix <- sapply(recc_predicted@items, function(x){  colnames(ratings_movies)[x] })
+dim(recc_matrix)
+```
+
+Let's take a look at the first four users:
+
+```{r eval=TRUE, echo=TRUE}
+#recc_matrix[, 1:4]
+recc_matrix[2:5][]
+```
+
+##Frequency Chart
+
+We will compute how many times each movie got recommended and build the related frequency histogram
+
+```{r eval=TRUE, echo=TRUE}
+table(number_of_items)
+```
+
+
+```{r eval=TRUE, echo=TRUE}
+number_of_items <- factor(table(recc_matrix))
+chart_title <- "Distribution of the number of items for UBCF"
+qplot(number_of_items) + 
+  ggtitle(chart_title)
+```
+
+Compared with the IBCF, the distribution has a longer tail. This means that there are some movies that are recommended much more often than the others. The maximum is 34, compared with 11 for IBCF.
+
+Let's take a look at the top titles:
+
+```{r eval=TRUE, echo=TRUE}
+number_of_items_sorted <- sort(number_of_items, decreasing = TRUE)
+number_of_items_top <- head(number_of_items_sorted, n = 4)
+table_top <- data.frame(names(number_of_items_top), number_of_items_top)
+table_top
+```
+
+The Titanic is the top movie title.
+
+#Collaborative filtering on binary data
+
+##Data preparation
+
+Let's build ratings_movies_watched using the binarize method as follows:
+
+1 if the user purchased (or liked) the item, and 0 otherwise. This case is different from the previous cases, so it should be treated separately. Similar to the other cases, the techniques are item-based and user-based.
+
+In our case, starting from ratings_movies, we can build a ratings_movies_watched matrix whose values will be 1 if the user viewed the movie, and 0 otherwise. We built it in one of the Binarizing the data sections.
+
+Binarizing method as as before with IBCF
+
+```{r eval=TRUE, echo=TRUE}
+ratings_movies_watched <- binarize(ratings_movies, minRating = 1)
+
+qplot(rowSums(ratings_movies_watched)) + stat_bin(binwidth = 10) + 
+  geom_vline(xintercept = mean(rowSums(ratings_movies_watched)), col = "red", linetype = "dashed") + 
+  ggtitle("Distribution of movies by user")
+```
+
+So, we can answer that on the average, each user watched about 100 movies, and only a few watched more than 200 movies.
+
+Let's define our training and test sets:
+
+```{r eval=TRUE, echo=TRUE}
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(ratings_movies), replace = TRUE, prob = c(0.8, 0.2))
+recc_data_train <- ratings_movies[which_train, ]
+recc_data_test <- ratings_movies[!which_train, ]
+```
+
+#Item-based collaborative filtering on binary data
+
+Same as before in exception to input parameter method equal to Jaccard
+
+```{r eval=TRUE, echo=TRUE}
+recc_model <- Recommender(data = recc_data_train, method = "IBCF", parameter = list(method = "Jaccard"))
+model_details <- getModel(recc_model)
+```
+
+Same as before, let's recommend six items to each of the users in the test set:
+
+```{r eval=TRUE, echo=TRUE}
+n_recommended <- 6
+
+recc_predicted <- predict(object = recc_model, newdata = recc_data_test, n = n_recommended)
+
+recc_matrix <- sapply(recc_predicted@items, function(x){
+  colnames(ratings_movies)[x]
+})
+```
+
+Let's further examine the recommendations for the first four users.
+
+```{r eval=TRUE, echo=TRUE}
+recc_matrix[2:5][]
+```
+
+Note: The approach is similar to IBCF using a rating matrix. Since we are not taking
+account of the ratings, the result will be less accurate.
+
+EOF
